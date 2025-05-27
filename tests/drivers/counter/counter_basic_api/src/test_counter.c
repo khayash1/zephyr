@@ -138,6 +138,9 @@ static const struct device *const devices[] = {
 #ifdef CONFIG_COUNTER_RA_AGT
 	DEVS_FOR_DT_COMPAT(renesas_ra_agt_counter)
 #endif
+#ifdef CONFIG_COUNTER_SNPS_DW
+	DEVS_FOR_DT_COMPAT(snps_dw_timers)
+#endif
 };
 
 static const struct device *const period_devs[] = {
