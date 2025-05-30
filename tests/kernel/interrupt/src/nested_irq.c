@@ -48,8 +48,17 @@
  * For the platforms that use the ARM GIC, use the SGI (software generated
  * interrupt) lines 14 and 15 for testing.
  */
+#if 0
 #define IRQ0_LINE	14
 #define IRQ1_LINE	15
+#else
+/*
+ * When Zephyr starts on TF-A, it reserves SGI 8-15 for secure interrupts,
+ * so needs to change to available lines.
+ */
+#define IRQ0_LINE	6
+#define IRQ1_LINE	7
+#endif
 
 /*
  * Choose lower prio for IRQ0 and higher priority for IRQ1
