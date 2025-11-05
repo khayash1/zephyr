@@ -78,13 +78,18 @@ static void dw_set_bit(uintptr_t base_addr, uint32_t offset,
 }
 #endif
 
-static inline int dw_base_to_block_base(uintptr_t base_addr)
+static inline uintptr_t dw_get_block_base(const struct device *port)
 {
+	const struct gpio_dw_config *config = port->config;
+	uintptr_t base_addr = config->base_addr;
+
 	return (base_addr & 0xFFFFFFC0);
 }
 
-static inline int dw_derive_port_from_base(uintptr_t base_addr)
+static inline int dw_get_port_id(const struct device *port)
 {
+	const struct gpio_dw_config *config = port->config;
+	uintptr_t base_addr = config->base_addr;
 	uint32_t port = (base_addr & 0x3f) / 12U;
 	return port;
 }
@@ -94,12 +99,12 @@ static inline int dw_interrupt_support(const struct gpio_dw_config *config)
 	return ((int)(config->irq_num) > 0U);
 }
 
-static inline uint32_t dw_get_ext_port(uintptr_t base_addr)
+static inline uint32_t dw_get_ext_port(const struct device *port)
 {
 	uint32_t ext_port;
 
 	/* 4-port GPIO implementation translates from base address to port */
-	switch (dw_derive_port_from_base(base_addr)) {
+	switch (dw_get_port_id(port)) {
 	case 1:
 		ext_port = EXT_PORTB;
 		break;
@@ -118,12 +123,12 @@ static inline uint32_t dw_get_ext_port(uintptr_t base_addr)
 	return ext_port;
 }
 
-static inline uint32_t dw_get_data_port(uintptr_t base_addr)
+static inline uint32_t dw_get_data_port(const struct device *port)
 {
 	uint32_t dr_port;
 
 	/* 4-port GPIO implementation translates from base address to port */
-	switch (dw_derive_port_from_base(base_addr)) {
+	switch (dw_get_port_id(port)) {
 	case 1:
 		dr_port = SWPORTB_DR;
 		break;
@@ -142,12 +147,12 @@ static inline uint32_t dw_get_data_port(uintptr_t base_addr)
 	return dr_port;
 }
 
-static inline uint32_t dw_get_dir_port(uintptr_t base_addr)
+static inline uint32_t dw_get_dir_port(const struct device *port)
 {
 	uint32_t ddr_port;
 
 	/* 4-port GPIO implementation translates from base address to port */
-	switch (dw_derive_port_from_base(base_addr)) {
+	switch (dw_get_port_id(port)) {
 	case 1:
 		ddr_port = SWPORTB_DDR;
 		break;
@@ -172,10 +177,9 @@ static int gpio_dw_pin_interrupt_configure(const struct device *port,
 					   enum gpio_int_trig trig)
 {
 	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = dw_base_to_block_base(config->base_addr);
-	uintptr_t port_base_addr = config->base_addr;
-	uint32_t dir_port = dw_get_dir_port(port_base_addr);
-	uint32_t data_port = dw_get_data_port(port_base_addr);
+	uintptr_t base_addr = dw_get_block_base(port);
+	uint32_t dir_port = dw_get_dir_port(port);
+	uint32_t data_port = dw_get_data_port(port);
 	uint32_t dir_reg;
 
 	/* Check for invalid pin number */
@@ -235,9 +239,8 @@ static inline void dw_pin_config(const struct device *port,
 				 uint32_t pin, int flags)
 {
 	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = dw_base_to_block_base(config->base_addr);
-	uint32_t port_base_addr = config->base_addr;
-	uint32_t dir_port = dw_get_dir_port(port_base_addr);
+	uintptr_t base_addr = dw_get_block_base(port);
+	uint32_t dir_port = dw_get_dir_port(port);
 	bool pin_is_output, need_debounce;
 
 	/* Set init value then direction */
@@ -265,9 +268,8 @@ static inline void dw_pin_config(const struct device *port,
 
 static void gpio_dw_set_hw_mode(const struct device *port, gpio_pin_t pin, bool hw_mode)
 {
-	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = dw_base_to_block_base(config->base_addr);
-	uint32_t port_id = dw_derive_port_from_base(config->base_addr);
+	uintptr_t base_addr = dw_get_block_base(port);
+	uint32_t port_id = dw_get_port_id(port);
 	uint32_t ctl_port;
 
 	/* 4-port GPIO implementation translates from base address to port */
@@ -335,10 +337,8 @@ static inline int gpio_dw_config(const struct device *port,
 
 static int gpio_dw_port_get_raw(const struct device *port, uint32_t *value)
 {
-	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = dw_base_to_block_base(config->base_addr);
-	uintptr_t port_base_addr = config->base_addr;
-	uint32_t ext_port = dw_get_ext_port(port_base_addr);
+	uintptr_t base_addr = dw_get_block_base(port);
+	uint32_t ext_port = dw_get_ext_port(port);
 
 	*value = dw_read(base_addr, ext_port);
 
@@ -348,10 +348,8 @@ static int gpio_dw_port_get_raw(const struct device *port, uint32_t *value)
 static int gpio_dw_port_set_masked_raw(const struct device *port,
 				       uint32_t mask, uint32_t value)
 {
-	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = dw_base_to_block_base(config->base_addr);
-	uintptr_t port_base_addr = config->base_addr;
-	uint32_t data_port = dw_get_data_port(port_base_addr);
+	uintptr_t base_addr = dw_get_block_base(port);
+	uint32_t data_port = dw_get_data_port(port);
 	uint32_t pins;
 
 	pins = dw_read(base_addr, data_port);
@@ -363,10 +361,8 @@ static int gpio_dw_port_set_masked_raw(const struct device *port,
 
 static int gpio_dw_port_set_bits_raw(const struct device *port, uint32_t mask)
 {
-	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = dw_base_to_block_base(config->base_addr);
-	uintptr_t port_base_addr = config->base_addr;
-	uint32_t data_port = dw_get_data_port(port_base_addr);
+	uintptr_t base_addr = dw_get_block_base(port);
+	uint32_t data_port = dw_get_data_port(port);
 	uint32_t pins;
 
 	pins = dw_read(base_addr, data_port);
@@ -379,10 +375,8 @@ static int gpio_dw_port_set_bits_raw(const struct device *port, uint32_t mask)
 static int gpio_dw_port_clear_bits_raw(const struct device *port,
 				       uint32_t mask)
 {
-	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = dw_base_to_block_base(config->base_addr);
-	uintptr_t port_base_addr = config->base_addr;
-	uint32_t data_port = dw_get_data_port(port_base_addr);
+	uintptr_t base_addr = dw_get_block_base(port);
+	uint32_t data_port = dw_get_data_port(port);
 	uint32_t pins;
 
 	pins = dw_read(base_addr, data_port);
@@ -394,10 +388,8 @@ static int gpio_dw_port_clear_bits_raw(const struct device *port,
 
 static int gpio_dw_port_toggle_bits(const struct device *port, uint32_t mask)
 {
-	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = dw_base_to_block_base(config->base_addr);
-	uintptr_t port_base_addr = config->base_addr;
-	uint32_t data_port = dw_get_data_port(port_base_addr);
+	uintptr_t base_addr = dw_get_block_base(port);
+	uint32_t data_port = dw_get_data_port(port);
 	uint32_t pins;
 
 	pins = dw_read(base_addr, data_port);
@@ -420,8 +412,7 @@ static inline int gpio_dw_manage_callback(const struct device *port,
 static void gpio_dw_isr(const struct device *port)
 {
 	struct gpio_dw_runtime *context = port->data;
-	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = dw_base_to_block_base(config->base_addr);
+	uintptr_t base_addr = dw_get_block_base(port);
 	uint32_t int_status;
 
 	int_status = dw_read(base_addr, INTSTATUS);
@@ -450,7 +441,7 @@ static int gpio_dw_initialize(const struct device *port)
 
 	if (dw_interrupt_support(config)) {
 
-		base_addr = dw_base_to_block_base(config->base_addr);
+		base_addr = dw_get_block_base(port);
 
 		/* interrupts in sync with system clock */
 		dw_set_bit(base_addr, INT_CLOCK_SYNC, LS_SYNC_POS, 1);
