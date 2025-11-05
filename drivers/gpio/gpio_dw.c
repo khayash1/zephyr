@@ -90,9 +90,15 @@ static inline uintptr_t dw_get_block_base(const struct device *port)
 
 static inline int dw_get_port_id(const struct device *port)
 {
+#ifdef CONFIG_GPIO_DW_MMIO_PARENT
+	const struct gpio_dw_config *config = port->config;
+
+	return config->base_addr;
+#else
 	uintptr_t base_addr = DEVICE_MMIO_NAMED_GET(port, reg);
 
 	return (base_addr & DW_PORT_ADDR_MASK) / DW_PORT_ADDR_OFFSET;
+#endif
 }
 
 static inline int dw_interrupt_support(const struct gpio_dw_config *config)
@@ -470,6 +476,12 @@ static int gpio_dw_initialize(const struct device *port)
 			    DEVICE_DT_INST_GET(n), INST_IRQ_FLAGS(n));				\
 		irq_enable(DT_INST_IRQN_BY_IDX(n, idx));					\
 
+#ifdef CONFIG_GPIO_DW_MMIO_PARENT
+#define DW_GPIO_MMIO_INIT(n) DEVICE_MMIO_NAMED_ROM_INIT(reg, DT_PARENT(DT_DRV_INST(n)))
+#else
+#define DW_GPIO_MMIO_INIT(n) DEVICE_MMIO_NAMED_ROM_INIT(reg, DT_DRV_INST(n))
+#endif
+
 #define GPIO_DW_INIT(n)										\
 	static void gpio_config_##n##_irq(const struct device *port)				\
 	{											\
@@ -478,7 +490,7 @@ static int gpio_dw_initialize(const struct device *port)
 	}											\
 												\
 	static const struct gpio_dw_config gpio_dw_config_##n = {				\
-		DEVICE_MMIO_NAMED_ROM_INIT(reg, DT_DRV_INST(n)),				\
+		DW_GPIO_MMIO_INIT(n),								\
 		.common = {									\
 			.port_pin_mask = GPIO_PORT_PIN_MASK_FROM_DT_INST(n),			\
 		},										\

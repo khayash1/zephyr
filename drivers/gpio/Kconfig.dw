@@ -9,3 +9,13 @@ config GPIO_DW
 	depends on DT_HAS_SNPS_DESIGNWARE_GPIO_ENABLED
 	help
 	  Enable driver for Designware GPIO
+
+if GPIO_DW
+
+config GPIO_DW_MMIO_PARENT
+	bool "Use map register area from parent node"
+	default n
+	help
+	  Use map register area from parent node.
+
+endif #GPIO_DW
