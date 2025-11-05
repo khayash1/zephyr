@@ -83,16 +83,14 @@ static void dw_set_bit(uintptr_t base_addr, uint32_t offset,
 
 static inline uintptr_t dw_get_block_base(const struct device *port)
 {
-	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = config->base_addr;
+	uintptr_t base_addr = DEVICE_MMIO_NAMED_GET(port, reg);
 
 	return (base_addr & ~DW_PORT_ADDR_MASK);
 }
 
 static inline int dw_get_port_id(const struct device *port)
 {
-	const struct gpio_dw_config *config = port->config;
-	uintptr_t base_addr = config->base_addr;
+	uintptr_t base_addr = DEVICE_MMIO_NAMED_GET(port, reg);
 
 	return (base_addr & DW_PORT_ADDR_MASK) / DW_PORT_ADDR_OFFSET;
 }
@@ -442,6 +440,8 @@ static int gpio_dw_initialize(const struct device *port)
 	const struct gpio_dw_config *config = port->config;
 	uintptr_t base_addr;
 
+	DEVICE_MMIO_NAMED_MAP(port, reg, K_MEM_CACHE_NONE);
+
 	if (dw_interrupt_support(config)) {
 
 		base_addr = dw_get_block_base(port);
@@ -478,6 +478,7 @@ static int gpio_dw_initialize(const struct device *port)
 	}											\
 												\
 	static const struct gpio_dw_config gpio_dw_config_##n = {				\
+		DEVICE_MMIO_NAMED_ROM_INIT(reg, DT_DRV_INST(n)),				\
 		.common = {									\
 			.port_pin_mask = GPIO_PORT_PIN_MASK_FROM_DT_INST(n),			\
 		},										\
