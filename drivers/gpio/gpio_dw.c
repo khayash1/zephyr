@@ -26,6 +26,9 @@
 #include <zephyr/drivers/interrupt_controller/ioapic.h>
 #endif
 
+#define DW_PORT_ADDR_MASK	0x3F
+#define DW_PORT_ADDR_OFFSET	12U
+
 static int gpio_dw_port_set_bits_raw(const struct device *port, uint32_t mask);
 static int gpio_dw_port_clear_bits_raw(const struct device *port,
 				       uint32_t mask);
@@ -83,15 +86,15 @@ static inline uintptr_t dw_get_block_base(const struct device *port)
 	const struct gpio_dw_config *config = port->config;
 	uintptr_t base_addr = config->base_addr;
 
-	return (base_addr & 0xFFFFFFC0);
+	return (base_addr & ~DW_PORT_ADDR_MASK);
 }
 
 static inline int dw_get_port_id(const struct device *port)
 {
 	const struct gpio_dw_config *config = port->config;
 	uintptr_t base_addr = config->base_addr;
-	uint32_t port = (base_addr & 0x3f) / 12U;
-	return port;
+
+	return (base_addr & DW_PORT_ADDR_MASK) / DW_PORT_ADDR_OFFSET;
 }
 
 static inline int dw_interrupt_support(const struct gpio_dw_config *config)
