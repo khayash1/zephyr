@@ -37,6 +37,8 @@ LOG_MODULE_REGISTER(dma_designware_axi, CONFIG_DMA_LOG_LEVEL);
 #define DMA_DW_AXI_COMPVERREG                    0x08
 #define DMA_DW_AXI_CFGREG                        0x10
 #define DMA_DW_AXI_CHENREG                       0x18
+#define DMA_DW_AXI_CHSUSPREG                     0x20
+#define DMA_DW_AXI_CHABORTREG                    0x28
 #define DMA_DW_AXI_INTSTATUSREG                  0x30
 #define DMA_DW_AXI_COMMONREG_INTCLEARREG         0x38
 #define DMA_DW_AXI_COMMONREG_INTSTATUS_ENABLEREG 0x40
@@ -81,6 +83,7 @@ LOG_MODULE_REGISTER(dma_designware_axi, CONFIG_DMA_LOG_LEVEL);
 
 /* Channel enable by setting ch_en and ch_en_we */
 #define CH_EN_BIT(chan)    BIT64(chan)
+#define CH_EN_BIT_N(chan)  (chan)
 #define CH_EN_WE(chan)     BIT64(8 + (chan))
 #define CH_EN(chan)        (CH_EN_WE(chan) | CH_EN_BIT(chan))
 /* Channel enable by setting ch_susp and ch_susp_we */
@@ -91,6 +94,14 @@ LOG_MODULE_REGISTER(dma_designware_axi, CONFIG_DMA_LOG_LEVEL);
 #define CH_ABORT_BIT(chan) BIT64(32 + (chan))
 #define CH_ABORT_WE(chan)  BIT64(40 + (chan))
 #define CH_ABORT(chan)     (CH_ABORT_WE(chan) | CH_ABORT_BIT(chan))
+
+/* Extended registers for ch_num >= 16 */
+#define CH_EXT_WE(chan)    ((chan < 16) ? BIT64(16 + chan) : BIT64(32 + chan))
+#define CH_EXT_BIT(chan)   ((chan < 16) ? BIT64(chan)      : BIT64(16 + chan))
+#define CH_EXT_BIT_N(chan) ((chan < 16) ? chan : 16 + chan)
+#define CH_EXT_EN(chan)    (CH_EXT_WE(chan) | CH_EXT_BIT(chan))
+#define CH_EXT_SUSP(chan)  CH_EXT_EN(chan)
+#define CH_EXT_ABORT(chan) CH_EXT_EN(chan)
 
 #define DMA_DW_AXI_CHAN_OFFSET(chan)             (0x100 * chan)
 
@@ -301,6 +312,11 @@ struct dma_dw_axi_dev_cfg {
 	uint32_t max_channel;
 };
 
+static inline bool dma_dw_axi_is_split_regs(const struct dma_dw_axi_dev_cfg *config)
+{
+	return config->max_channel > 8;
+}
+
 /**
  * @brief get current status of the channel
  *
@@ -313,14 +329,25 @@ static uint32_t dma_dw_axi_get_ch_status(const struct device *dev, uint32_t ch)
 {
 	uint64_t ch_status;
 	uintptr_t reg_base = DEVICE_MMIO_NAMED_GET(dev, dma_mmio);
+	const struct dma_dw_axi_dev_cfg *dw_dma_config = DEV_CFG(dev);
+	bool is_active, is_suspend;
 
-	ch_status = sys_read64(reg_base + DMA_DW_AXI_CHENREG);
+	if (dma_dw_axi_is_split_regs(dw_dma_config)) {
+		ch_status = sys_read64(reg_base + DMA_DW_AXI_CHENREG);
+		is_active  = !!(ch_status & CH_EXT_BIT(ch));
+		ch_status = sys_read64(reg_base + DMA_DW_AXI_CHSUSPREG);
+		is_suspend = !!(ch_status & CH_EXT_BIT(ch));
+	} else {
+		ch_status = sys_read64(reg_base + DMA_DW_AXI_CHENREG);
+		is_active  = !!(ch_status & CH_EN_BIT(ch));
+		is_suspend = !!(ch_status & CH_SUSP_BIT(ch));
+	}
 
 	/* channel is active/busy in the dma transfer */
-	if (ch_status & CH_EN_BIT(ch)) {
+	if (is_active) {
 
 		/* channel is currently suspended */
-		if (ch_status & CH_SUSP_BIT(ch)) {
+		if (is_suspend) {
 			return DMA_DW_AXI_CH_SUSPENDED;
 		}
 
@@ -331,9 +358,19 @@ static uint32_t dma_dw_axi_get_ch_status(const struct device *dev, uint32_t ch)
 	return DMA_DW_AXI_CH_IDLE;
 }
 
-static bool dma_dw_axi_is_chan_busy(uintptr_t reg_base, uint32_t channel)
+static bool dma_dw_axi_is_chan_busy(const struct device *dev, uint32_t channel)
 {
-	return !WAIT_FOR(!((sys_read64(reg_base + DMA_DW_AXI_CHENREG)) & (CH_EN_BIT(channel))),
+	uintptr_t reg_base = DEVICE_MMIO_NAMED_GET(dev, dma_mmio);
+	const struct dma_dw_axi_dev_cfg *dw_dma_config = DEV_CFG(dev);
+	uint32_t mask;
+
+	if (dma_dw_axi_is_split_regs(dw_dma_config)) {
+		mask = CH_EXT_BIT(channel);
+	} else {
+		mask = CH_EN_BIT(channel);
+	}
+
+	return !WAIT_FOR(!((sys_read64(reg_base + DMA_DW_AXI_CHENREG)) & mask),
 			  CONFIG_DMA_CHANNEL_STATUS_TIMEOUT, k_busy_wait(10));
 }
 
@@ -707,6 +744,7 @@ static int dma_dw_axi_start(const struct device *dev, uint32_t channel)
 	struct dma_dw_axi_dev_data *const dw_dev_data = DEV_DATA(dev);
 	const struct dma_dw_axi_dev_cfg *dw_dma_config = DEV_CFG(dev);
 	uintptr_t reg_base = DEVICE_MMIO_NAMED_GET(dev, dma_mmio);
+	uint64_t mask;
 
 	/* validate channel number */
 	if (channel > dw_dma_config->max_channel - 1) {
@@ -756,8 +794,15 @@ static int dma_dw_axi_start(const struct device *dev, uint32_t channel)
 #endif
 
 	/* Enable the channel which will initiate DMA transfer */
-	sys_write64(CH_EN(channel), reg_base + DMA_DW_AXI_CHENREG);
+	if (dma_dw_axi_is_split_regs(dw_dma_config)) {
+		mask = CH_EXT_EN(channel);
+	} else {
+		mask = CH_EN(channel);
+	}
+	sys_write64(mask, reg_base + DMA_DW_AXI_CHENREG);
+
 	atomic_set(&chan_data->ch_state, dma_dw_axi_get_ch_status(dev, channel));
+
 	return 0;
 }
 
@@ -769,6 +814,9 @@ static int dma_dw_axi_stop(const struct device *dev, uint32_t channel)
 	const struct dma_dw_axi_dev_cfg *dw_dma_config = DEV_CFG(dev);
 	struct dma_dw_axi_dev_data *const dw_dev_data = DEV_DATA(dev);
 	uintptr_t reg_base = DEVICE_MMIO_NAMED_GET(dev, dma_mmio);
+	uint32_t reg_offset;
+	uint64_t mask;
+	int bit;
 
 	/* channel should be valid */
 	if (channel > dw_dma_config->max_channel - 1) {
@@ -791,26 +839,43 @@ static int dma_dw_axi_stop(const struct device *dev, uint32_t channel)
 	 * Flush out FIFO and data will be lost. Then corresponding interrupt will
 	 * be raised for abort and CH_EN bit will be cleared from CHENREG register
 	 */
-	sys_write64(CH_SUSP(channel), reg_base + DMA_DW_AXI_CHENREG);
+	if (dma_dw_axi_is_split_regs(dw_dma_config)) {
+		mask = CH_EXT_SUSP(channel);
+		reg_offset = DMA_DW_AXI_CHSUSPREG;
+	} else {
+		mask = CH_SUSP(channel);
+		reg_offset = DMA_DW_AXI_CHENREG;
+	}
+	sys_write64(mask, reg_base + reg_offset);
 
 	/* Try to disable the channel */
-	sys_write64(CH_EN_WE(channel), reg_base + DMA_DW_AXI_CHENREG);
-
-	/* Bit [channel+16] is the write-enable mask for the channel-enable
+	/* CH_EN_WE() or CH_EXT_WE() is the write-enable mask for the channel-enable
 	 * bit above. Hardware only latches the write to the enable bit
 	 * (channel) if its corresponding write-enable bit is also set in
 	 * the same write; otherwise the clear is ignored. Set it here so
 	 * the disable request actually takes effect.
 	 */
-	sys_set_bit(reg_base + DMA_DW_AXI_CHENREG, channel + 16);
+	if (dma_dw_axi_is_split_regs(dw_dma_config)) {
+		mask = CH_EXT_WE(channel);
+	} else {
+		mask = CH_EN_WE(channel);
+	}
+	sys_write64(mask, reg_base + DMA_DW_AXI_CHENREG);
 
-	is_channel_busy = dma_dw_axi_is_chan_busy(reg_base, channel);
+	is_channel_busy = dma_dw_axi_is_chan_busy(dev, channel);
 
 	if (is_channel_busy) {
 		LOG_WRN("No response from handshaking interface... Aborting a channel...");
-		sys_write64(CH_ABORT(channel), reg_base + DMA_DW_AXI_CHENREG);
+		if (dma_dw_axi_is_split_regs(dw_dma_config)) {
+			mask = CH_EXT_ABORT(channel);
+			reg_offset = DMA_DW_AXI_CHABORTREG;
+		} else {
+			mask = CH_ABORT(channel);
+			reg_offset = DMA_DW_AXI_CHENREG;
+		}
+		sys_write64(mask, reg_base + reg_offset);
 
-		is_channel_busy = dma_dw_axi_is_chan_busy(reg_base, channel);
+		is_channel_busy = dma_dw_axi_is_chan_busy(dev, channel);
 		if (is_channel_busy) {
 			LOG_ERR("Channel abort failed");
 			return -EBUSY;
@@ -830,6 +895,8 @@ static int dma_dw_axi_resume(const struct device *dev, uint32_t channel)
 	uintptr_t reg_base = DEVICE_MMIO_NAMED_GET(dev, dma_mmio);
 	const struct dma_dw_axi_dev_cfg *dw_dma_config = DEV_CFG(dev);
 	uint32_t ch_state;
+	uint32_t reg_offset;
+	uint64_t we_mask, bit_mask;
 
 	/* channel should be valid */
 	if (channel > dw_dma_config->max_channel - 1) {
@@ -843,13 +910,22 @@ static int dma_dw_axi_resume(const struct device *dev, uint32_t channel)
 		return 0;
 	}
 
-	reg = sys_read64(reg_base + DMA_DW_AXI_CHENREG);
+	if (dma_dw_axi_is_split_regs(dw_dma_config)) {
+		reg_offset = DMA_DW_AXI_CHSUSPREG;
+		we_mask = CH_EXT_WE(channel);
+		bit_mask = CH_EXT_BIT(channel);
+	} else {
+		reg_offset = DMA_DW_AXI_CHENREG;
+		we_mask = CH_SUSP_WE(channel);
+		bit_mask = CH_SUSP_BIT(channel);
+	}
+	reg = sys_read64(reg_base + reg_offset);
 	/* channel susp write enable bit has to be asserted */
-	reg |= CH_SUSP_WE(channel);
+	reg |= we_mask;
 	/* channel susp bit must be cleared to resume a channel*/
-	reg &= ~CH_SUSP_BIT(channel);
+	reg &= ~bit_mask;
 	/* resume a channel by writing 0: ch_susp and 1: ch_susp_we */
-	sys_write64(reg, reg_base + DMA_DW_AXI_CHENREG);
+	sys_write64(reg, reg_base + reg_offset);
 
 	return 0;
 }
@@ -861,6 +937,8 @@ static int dma_dw_axi_suspend(const struct device *dev, uint32_t channel)
 	uintptr_t reg_base = DEVICE_MMIO_NAMED_GET(dev, dma_mmio);
 	const struct dma_dw_axi_dev_cfg *dw_dma_config = DEV_CFG(dev);
 	uint32_t ch_state;
+	uint32_t reg_offset;
+	uint64_t mask;
 
 	/* channel should be valid */
 	if (channel > dw_dma_config->max_channel - 1) {
@@ -875,7 +953,14 @@ static int dma_dw_axi_suspend(const struct device *dev, uint32_t channel)
 	}
 
 	/* suspend dma transfer */
-	sys_write64(CH_SUSP(channel), reg_base + DMA_DW_AXI_CHENREG);
+	if (dma_dw_axi_is_split_regs(dw_dma_config)) {
+		reg_offset = DMA_DW_AXI_CHSUSPREG;
+		mask = CH_EXT_SUSP(channel);
+	} else {
+		reg_offset = DMA_DW_AXI_CHENREG;
+		mask = CH_SUSP(channel);
+	}
+	sys_write64(mask, reg_base + reg_offset);
 
 	ret = WAIT_FOR(dma_dw_axi_get_ch_status(dev, channel) ==
 			DMA_DW_AXI_CH_SUSPENDED, CONFIG_DMA_CHANNEL_STATUS_TIMEOUT,
