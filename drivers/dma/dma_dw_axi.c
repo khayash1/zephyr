@@ -758,7 +758,7 @@ static int dma_dw_axi_start(const struct device *dev, uint32_t channel)
 
 static int dma_dw_axi_stop(const struct device *dev, uint32_t channel)
 {
-	bool is_channel_busy;
+	bool is_channel_stopped;
 	uint32_t ch_state;
 	const struct dma_dw_axi_dev_cfg *dw_dma_config = DEV_CFG(dev);
 	uintptr_t reg_base = DEVICE_MMIO_NAMED_GET(dev, dma_mmio);
@@ -789,16 +789,16 @@ static int dma_dw_axi_stop(const struct device *dev, uint32_t channel)
 	/* Try to disable the channel */
 	sys_write64(CH_EN_WE(channel), reg_base + DMA_DW_AXI_CHENREG);
 
-	is_channel_busy = WAIT_FOR((sys_read64(reg_base + DMA_DW_AXI_CHENREG)) & CH_EN_BIT(channel),
+	is_channel_stopped = WAIT_FOR((sys_read64(reg_base + DMA_DW_AXI_CHENREG) & CH_EN_BIT(channel)) == 0U,
 						CONFIG_DMA_CHANNEL_STATUS_TIMEOUT, k_busy_wait(10));
-	if (is_channel_busy) {
+	if (!is_channel_stopped) {
 		LOG_WRN("No response from handshaking interface... Aborting a channel...");
 		sys_write64(CH_ABORT(channel), reg_base + DMA_DW_AXI_CHENREG);
 
-		is_channel_busy = WAIT_FOR((sys_read64(reg_base + DMA_DW_AXI_CHENREG)) &
-				CH_EN_BIT(channel), CONFIG_DMA_CHANNEL_STATUS_TIMEOUT,
+		is_channel_stopped = WAIT_FOR((sys_read64(reg_base + DMA_DW_AXI_CHENREG) &
+				CH_EN_BIT(channel)) == 0U, CONFIG_DMA_CHANNEL_STATUS_TIMEOUT,
 				k_busy_wait(10));
-		if (is_channel_busy) {
+		if (!is_channel_stopped) {
 			LOG_ERR("Channel abort failed");
 			return -EBUSY;
 		}
