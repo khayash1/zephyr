@@ -787,7 +787,7 @@ static int dma_dw_axi_stop(const struct device *dev, uint32_t channel)
 	sys_write64(CH_SUSP(channel), reg_base + DMA_DW_AXI_CHENREG);
 
 	/* Try to disable the channel */
-	sys_clear_bit(reg_base + DMA_DW_AXI_CHENREG, channel);
+	sys_write64(CH_EN_WE(channel), reg_base + DMA_DW_AXI_CHENREG);
 
 	is_channel_busy = WAIT_FOR((sys_read64(reg_base + DMA_DW_AXI_CHENREG)) & CH_EN_BIT(channel),
 						CONFIG_DMA_CHANNEL_STATUS_TIMEOUT, k_busy_wait(10));
